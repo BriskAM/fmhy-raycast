@@ -7,6 +7,9 @@ import {
   showToast,
   Toast,
   getPreferenceValues,
+  LocalStorage,
+  Clipboard,
+  open,
 } from "@raycast/api";
 import { useState, useEffect, useMemo } from "react";
 import fs from "node:fs";
@@ -17,16 +20,48 @@ import { fetchLatestCommitSha, fetchRawFileContent, fetchCommitCompareDiffs } fr
 import { parseMarkdownFile } from "./parser";
 
 const INDEX_FILE = "fmhy-index.json";
+const RECENT_OPENED_KEY = "recently-opened-v1";
 
 interface Preferences {
   showNsfw: boolean;
 }
+
+// Map short search prefixes to main category IDs
+const PREFIX_MAP: Record<string, string> = {
+  ai: "ai",
+  g: "gaming",
+  gaming: "gaming",
+  v: "video",
+  video: "video",
+  movie: "video",
+  movies: "video",
+  p: "privacy",
+  privacy: "privacy",
+  ad: "privacy",
+  a: "audio",
+  audio: "audio",
+  music: "audio",
+  d: "downloading",
+  downloading: "downloading",
+  t: "torrenting",
+  torrent: "torrenting",
+  torrenting: "torrenting",
+  e: "educational",
+  edu: "educational",
+  educational: "educational",
+  m: "mobile",
+  mobile: "mobile",
+  l: "linux-macos",
+  linux: "linux-macos",
+  mac: "linux-macos",
+};
 
 export default function Command() {
   const [items, setItems] = useState<FMItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [recentlyOpenedIds, setRecentlyOpenedIds] = useState<string[]>([]);
   const [syncStatus, setSyncStatus] = useState<string>("");
   const [syncProgress, setSyncProgress] = useState<number | null>(null);
 
@@ -159,10 +194,34 @@ export default function Command() {
     }
   };
 
-  // Load index on mount, sync if needed
+  // Track user visits to save in Favorites / Recently Opened
+  const trackVisit = async (item: FMItem) => {
+    try {
+      const stored = await LocalStorage.getItem<string>(RECENT_OPENED_KEY);
+      let list: string[] = [];
+      if (stored) {
+        list = JSON.parse(stored) as string[];
+      }
+
+      // Add to head of array and filter duplicates
+      const newList = [item.id, ...list.filter((id) => id !== item.id)].slice(0, 10);
+      await LocalStorage.setItem(RECENT_OPENED_KEY, JSON.stringify(newList));
+      setRecentlyOpenedIds(newList);
+    } catch (e) {
+      console.error("Failed to save recently opened item:", e);
+    }
+  };
+
+  // Load index and recently opened on mount
   useEffect(() => {
-    const initIndex = async () => {
+    const initData = async () => {
       try {
+        // Load favorites/recent
+        const storedRecent = await LocalStorage.getItem<string>(RECENT_OPENED_KEY);
+        if (storedRecent) {
+          setRecentlyOpenedIds(JSON.parse(storedRecent) as string[]);
+        }
+
         if (fs.existsSync(indexPath)) {
           const content = fs.readFileSync(indexPath, "utf-8");
           const indexData = JSON.parse(content) as SearchIndex;
@@ -186,7 +245,7 @@ export default function Command() {
       }
     };
 
-    initIndex();
+    initData();
   }, []);
 
   // Force manual rebuild of index
@@ -209,11 +268,47 @@ export default function Command() {
     }
   };
 
+  // Clear recently opened favorites list
+  const handleClearRecent = async () => {
+    await LocalStorage.removeItem(RECENT_OPENED_KEY);
+    setRecentlyOpenedIds([]);
+    await showToast({
+      style: Toast.Style.Success,
+      title: "History cleared",
+    });
+  };
+
+  // Parse search prefix (e.g. "ai: image" or "/ai image")
+  const parsedSearch = useMemo(() => {
+    const trimmed = searchText.trim();
+    const prefixRegex = /^([a-zA-Z0-9-]+)[:/]\s*(.*)$/;
+    const match = trimmed.match(prefixRegex);
+
+    if (match) {
+      const rawPrefix = match[1].toLowerCase();
+      const query = match[2];
+      const categoryId = PREFIX_MAP[rawPrefix];
+
+      if (categoryId) {
+        return {
+          categoryOverride: categoryId,
+          query: query,
+        };
+      }
+    }
+
+    return {
+      categoryOverride: null,
+      query: trimmed,
+    };
+  }, [searchText]);
+
   // Filter and sort items based on input, category dropdown, and NSFW preference
   const filteredItems = useMemo(() => {
     let result = items;
+    const { categoryOverride, query } = parsedSearch;
 
-    // Filter out NSFW content if not allowed (e.g. any links from NSFW sources if they exist)
+    // Filter out NSFW content if not allowed
     if (!preferences.showNsfw) {
       result = result.filter(
         (item) =>
@@ -224,12 +319,16 @@ export default function Command() {
       );
     }
 
-    if (selectedCategory !== "all") {
-      result = result.filter((item) => item.category === selectedCategory);
+    // Determine category filter
+    const activeCategory = categoryOverride || selectedCategory;
+    if (activeCategory !== "all" && activeCategory !== "starred-picks") {
+      result = result.filter((item) => item.category === activeCategory);
+    } else if (activeCategory === "starred-picks") {
+      result = result.filter((item) => item.starred);
     }
 
-    if (searchText) {
-      const query = searchText.toLowerCase().trim();
+    if (query) {
+      const q = query.toLowerCase();
 
       // Helper function to check if the query matches a category/subcategory/section name
       // Prioritizes subcategory (H1) > section (H2) > category (file name)
@@ -238,20 +337,17 @@ export default function Command() {
         const sec = item.section.toLowerCase();
         const cat = item.category.toLowerCase();
 
-        // Subcategory matches (H1) - highest priority
-        if (sub === query) return 10;
-        if (sub.startsWith(query)) return 9;
-        if (sub.includes(query)) return 8;
+        if (sub === q) return 10;
+        if (sub.startsWith(q)) return 9;
+        if (sub.includes(q)) return 8;
 
-        // Section matches (H2) - medium priority
-        if (sec === query) return 7;
-        if (sec.startsWith(query)) return 6;
-        if (sec.includes(query)) return 5;
+        if (sec === q) return 7;
+        if (sec.startsWith(q)) return 6;
+        if (sec.includes(q)) return 5;
 
-        // Category matches (Vitepress file name) - low priority
-        if (cat === query) return 4;
-        if (cat.startsWith(query)) return 3;
-        if (cat.includes(query)) return 2;
+        if (cat === q) return 4;
+        if (cat.startsWith(q)) return 3;
+        if (cat.includes(q)) return 2;
 
         return 0;
       };
@@ -259,13 +355,13 @@ export default function Command() {
       // Helper function to check how well the query matches the tool's title
       const getTitleMatchScore = (item: FMItem) => {
         const title = item.title.toLowerCase();
-        if (title === query) return 10;
-        if (title.startsWith(query)) return 8;
-        if (title.includes(query)) return 6;
+        if (title === q) return 10;
+        if (title.startsWith(q)) return 8;
+        if (title.includes(q)) return 6;
         return 0;
       };
 
-      // Check if there is any metadata (category/subcategory/section) matching the query
+      // Check if there is any metadata matching the query
       const hasMetadataMatch = result.some((item) => getMetadataMatchScore(item) >= 5);
 
       if (hasMetadataMatch) {
@@ -274,8 +370,8 @@ export default function Command() {
           (item) =>
             getTitleMatchScore(item) > 0 ||
             getMetadataMatchScore(item) > 0 ||
-            item.description.toLowerCase().includes(query) ||
-            item.url.toLowerCase().includes(query)
+            item.description.toLowerCase().includes(q) ||
+            item.url.toLowerCase().includes(q)
         );
 
         // Find the single best title match
@@ -338,10 +434,10 @@ export default function Command() {
         const matched = result.filter(
           (item) =>
             getTitleMatchScore(item) > 0 ||
-            item.description.toLowerCase().includes(query) ||
-            item.section.toLowerCase().includes(query) ||
-            item.subcategory.toLowerCase().includes(query) ||
-            item.url.toLowerCase().includes(query)
+            item.description.toLowerCase().includes(q) ||
+            item.section.toLowerCase().includes(q) ||
+            item.subcategory.toLowerCase().includes(q) ||
+            item.url.toLowerCase().includes(q)
         );
 
         // Sort: title exact -> title starts-with -> title contains -> starred -> rest
@@ -369,8 +465,27 @@ export default function Command() {
       });
     }
 
-    return result.slice(0, 200); // Limit rendered elements for fluid performance
-  }, [items, searchText, selectedCategory, preferences.showNsfw]);
+    return result;
+  }, [items, parsedSearch, selectedCategory, preferences.showNsfw]);
+
+  // Compile favorites list
+  const recentlyOpenedItems = useMemo(() => {
+    if (searchText) return []; // Hide favorites section when searching
+
+    return recentlyOpenedIds
+      .map((id) => items.find((item) => item.id === id))
+      .filter((item): item is FMItem => !!item);
+  }, [items, recentlyOpenedIds, searchText]);
+
+  // Compile normal items display list (if favorites are shown, we exclude them from the all list to avoid duplication)
+  const mainItemsList = useMemo(() => {
+    const list = filteredItems;
+    if (searchText) return list.slice(0, 200);
+
+    // If search is empty, filter out favorites from the main list
+    const filtered = list.filter((item) => !recentlyOpenedIds.includes(item.id));
+    return filtered.slice(0, 200);
+  }, [filteredItems, recentlyOpenedIds, searchText]);
 
   // Extract unique categories for dropdown filter
   const categoriesList = useMemo(() => {
@@ -381,12 +496,129 @@ export default function Command() {
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, []);
 
+  // Generate Detail View Markdown Content
+  const getDetailMarkdown = (item: FMItem) => {
+    const starredBadge = item.starred ? " ⭐ Community Pick" : "";
+
+    let mirrorsSection = "";
+    if (item.mirrors.length > 0) {
+      mirrorsSection = `\n### Mirrors\n` + item.mirrors.map((m, idx) => `* [Mirror ${idx + 2}](${m})`).join("\n");
+    }
+
+    let alternativesSection = "";
+    if (item.alternatives.length > 0) {
+      alternativesSection = `\n### Alternatives\n` + item.alternatives.map((alt) => `* [${alt.name}](${alt.url})`).join("\n");
+    }
+
+    let officialSection = "";
+    if (item.officialLinks.length > 0) {
+      officialSection = `\n### Official Links\n` + item.officialLinks.map((off) => `* [${off.name}](${off.url})`).join("\n");
+    }
+
+    return `
+# ${item.title}${starredBadge}
+
+${item.description ? `> ${item.description}` : "*No description available.*"}
+
+### Navigation Path
+**${item.category.toUpperCase()}** › ${item.subcategory} ${item.section ? `› ${item.section}` : ""}
+
+${mirrorsSection}
+${alternativesSection}
+${officialSection}
+    `;
+  };
+
+  // Action Panel wrapper to track visits on actions
+  const renderActions = (item: FMItem) => {
+    return (
+      <ActionPanel>
+        <Action
+          title="Open Primary Link"
+          icon={Icon.Globe}
+          onAction={async () => {
+            await trackVisit(item);
+            await open(item.url);
+          }}
+        />
+        <Action
+          title="Copy Primary Link"
+          icon={Icon.CopyClipboard}
+          onAction={async () => {
+            await trackVisit(item);
+            await Clipboard.copy(item.url);
+            await showToast({ style: Toast.Style.Success, title: "Copied link to clipboard" });
+          }}
+        />
+
+        {/* Sub-section for Mirrors & Alternatives */}
+        {(item.mirrors.length > 0 || item.alternatives.length > 0 || item.officialLinks.length > 0) && (
+          <ActionPanel.Section title="Mirrors & Alternatives">
+            {item.mirrors.map((mirrorUrl, idx) => (
+              <Action
+                key={`mirror-${idx}`}
+                title={`Open Mirror ${idx + 2}`}
+                icon={Icon.Globe}
+                onAction={async () => {
+                  await trackVisit(item);
+                  await open(mirrorUrl);
+                }}
+                shortcut={{ modifiers: ["cmd"], key: (idx + 2).toString() as any }}
+              />
+            ))}
+            {item.alternatives.map((alt, idx) => (
+              <Action
+                key={`alt-${idx}`}
+                title={`Open Alternative: ${alt.name}`}
+                icon={Icon.Globe}
+                onAction={async () => {
+                  await trackVisit(item);
+                  await open(alt.url);
+                }}
+              />
+            ))}
+            {item.officialLinks.map((official, idx) => (
+              <Action
+                key={`official-${idx}`}
+                title={`Open ${official.name}`}
+                icon={Icon.Globe}
+                onAction={async () => {
+                  await trackVisit(item);
+                  await open(official.url);
+                }}
+              />
+            ))}
+          </ActionPanel.Section>
+        )}
+
+        {/* Re-indexing & Administrative Actions */}
+        <ActionPanel.Section title="Index Administration">
+          <Action
+            title="Force Refresh Index"
+            icon={Icon.ArrowClockwise}
+            shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+            onAction={handleForceSync}
+          />
+          {recentlyOpenedIds.length > 0 && (
+            <Action
+              title="Clear Favorites History"
+              icon={Icon.Trash}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "delete" }}
+              onAction={handleClearRecent}
+            />
+          )}
+        </ActionPanel.Section>
+      </ActionPanel>
+    );
+  };
+
   return (
     <List
       isLoading={isLoading}
-      searchBarPlaceholder={syncStatus || "Search FMHY tools, websites, guides..."}
+      searchBarPlaceholder={syncStatus || "Search FMHY (e.g. 'ai: generation' or 'movies')..."}
       onSearchTextChange={setSearchText}
       throttle
+      isShowingDetail={!isLoading && items.length > 0}
       searchBarAccessory={
         categoriesList.length > 0 ? (
           <List.Dropdown
@@ -395,6 +627,7 @@ export default function Command() {
             onChange={(newValue) => setSelectedCategory(newValue)}
           >
             <List.Dropdown.Item title="All Categories" value="all" />
+            <List.Dropdown.Item title="⭐ Starred Picks Only" value="starred-picks" />
             {categoriesList.map((cat) => (
               <List.Dropdown.Item key={cat.id} title={cat.name} value={cat.id} />
             ))}
@@ -402,68 +635,61 @@ export default function Command() {
         ) : undefined
       }
     >
-      {filteredItems.map((item) => (
-        <List.Item
-          key={item.id}
-          title={item.title}
-          subtitle={
-            (item.subcategory ? item.subcategory : "") +
-            (item.section ? ` › ${item.section}` : "")
-          }
-          accessories={[
-            {
-              text: item.description,
-            },
-            ...(item.starred ? [{ icon: Icon.Star, tooltip: "Starred Pick" }] : []),
-          ]}
-          actions={
-            <ActionPanel>
-              <Action.OpenInBrowser url={item.url} title="Open Primary Link" />
-              <Action.CopyToClipboard content={item.url} title="Copy Primary Link" />
-
-              {/* Sub-section for Mirrors & Alternatives */}
-              {(item.mirrors.length > 0 ||
-                item.alternatives.length > 0 ||
-                item.officialLinks.length > 0) && (
-                <ActionPanel.Section title="Mirrors & Alternatives">
-                  {item.mirrors.map((mirrorUrl, idx) => (
-                    <Action.OpenInBrowser
-                      key={`mirror-${idx}`}
-                      url={mirrorUrl}
-                      title={`Open Mirror ${idx + 2}`}
-                      shortcut={{ modifiers: ["cmd"], key: (idx + 2).toString() as any }}
-                    />
-                  ))}
-                  {item.alternatives.map((alt, idx) => (
-                    <Action.OpenInBrowser
-                      key={`alt-${idx}`}
-                      url={alt.url}
-                      title={`Open Alternative: ${alt.name}`}
-                    />
-                  ))}
-                  {item.officialLinks.map((official, idx) => (
-                    <Action.OpenInBrowser
-                      key={`official-${idx}`}
-                      url={official.url}
-                      title={`Open ${official.name}`}
-                    />
-                  ))}
-                </ActionPanel.Section>
-              )}
-
-              {/* Re-indexing Action */}
-              <ActionPanel.Section title="Index Administration">
-                <Action
-                  title="Force Refresh Index"
-                  icon={Icon.ArrowClockwise}
-                  shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
-                  onAction={handleForceSync}
+      {/* 1. Recently Opened Section */}
+      {recentlyOpenedItems.length > 0 && (
+        <List.Section title="Recently Opened / Favorites">
+          {recentlyOpenedItems.map((item) => (
+            <List.Item
+              key={`recent-${item.id}`}
+              title={item.title}
+              subtitle={item.subcategory}
+              icon={item.starred ? { source: Icon.Star, tintColor: "#f5c518" } : Icon.Heart}
+              detail={
+                <List.Item.Detail
+                  markdown={getDetailMarkdown(item)}
+                  metadata={
+                    <List.Item.Detail.Metadata>
+                      <List.Item.Detail.Metadata.Label title="Title" text={item.title} />
+                      <List.Item.Detail.Metadata.Link title="Primary URL" text={item.url} target={item.url} />
+                      <List.Item.Detail.Metadata.Label title="Category" text={item.category} />
+                      <List.Item.Detail.Metadata.Label title="Subcategory" text={item.subcategory} />
+                      {item.section && <List.Item.Detail.Metadata.Label title="Section" text={item.section} />}
+                    </List.Item.Detail.Metadata>
+                  }
                 />
-              </ActionPanel.Section>
-            </ActionPanel>
-          }
-        />
-      ))}
+              }
+              actions={renderActions(item)}
+            />
+          ))}
+        </List.Section>
+      )}
+
+      {/* 2. Main Wiki Resources Section */}
+      <List.Section title={searchText ? "Search Results" : "All Resources"}>
+        {mainItemsList.map((item) => (
+          <List.Item
+            key={item.id}
+            title={item.title}
+            subtitle={item.subcategory}
+            icon={item.starred ? { source: Icon.Star, tintColor: "#f5c518" } : undefined}
+            detail={
+              <List.Item.Detail
+                markdown={getDetailMarkdown(item)}
+                metadata={
+                  <List.Item.Detail.Metadata>
+                    <List.Item.Detail.Metadata.Label title="Title" text={item.title} />
+                    <List.Item.Detail.Metadata.Link title="Primary URL" text={item.url} target={item.url} />
+                    <List.Item.Detail.Metadata.Label title="Category" text={item.category} />
+                    <List.Item.Detail.Metadata.Label title="Subcategory" text={item.subcategory} />
+                    {item.section && <List.Item.Detail.Metadata.Label title="Section" text={item.section} />}
+                  </List.Item.Detail.Metadata>
+                }
+              />
+            }
+            actions={renderActions(item)}
+          />
+        ))}
+      </List.Section>
     </List>
   );
 }
