@@ -13,8 +13,7 @@
   "commands": [
     {
       "name": "search",
-      "title": "Search FMHY",
-      "subtitle": "FreeMediaHeckYeah",
+      "title": "FMHY Search",
       "description": "Offline search of FMHY resources and mirrors",
       "mode": "view"
     }
