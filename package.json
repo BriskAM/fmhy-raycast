@@ -3,7 +3,7 @@
   "name": "fmhy-search",
   "title": "FMHY Search",
   "description": "Search the FreeMediaHeckYeah database of free resources",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "author": "akshitmehta",
   "categories": [
     "Web",

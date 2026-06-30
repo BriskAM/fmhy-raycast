@@ -10,13 +10,18 @@ import {
   LocalStorage,
   Clipboard,
   open,
+  Keyboard,
 } from "@raycast/api";
 import { useState, useEffect, useMemo } from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { FMItem, SearchIndex } from "./types";
 import { CATEGORY_PAGES } from "./constants";
-import { fetchLatestCommitSha, fetchRawFileContent, fetchCommitCompareDiffs } from "./github";
+import {
+  fetchLatestCommitSha,
+  fetchRawFileContent,
+  fetchCommitCompareDiffs,
+} from "./github";
 import { parseMarkdownFile } from "./parser";
 
 const INDEX_FILE = "fmhy-index.json";
@@ -63,7 +68,6 @@ export default function Command() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [recentlyOpenedIds, setRecentlyOpenedIds] = useState<string[]>([]);
   const [syncStatus, setSyncStatus] = useState<string>("");
-  const [syncProgress, setSyncProgress] = useState<number | null>(null);
 
   const preferences = getPreferenceValues<Preferences>();
   const indexPath = path.join(environment.supportPath, INDEX_FILE);
@@ -85,7 +89,6 @@ export default function Command() {
 
     for (let i = 0; i < total; i++) {
       const page = CATEGORY_PAGES[i];
-      setSyncProgress(i / total);
       setSyncStatus(`Downloading ${page.name} (${i + 1}/${total})...`);
 
       try {
@@ -106,7 +109,6 @@ export default function Command() {
     fs.writeFileSync(indexPath, JSON.stringify(indexData));
     setItems(allItems);
     setIsLoading(false);
-    setSyncProgress(null);
     setSyncStatus("");
 
     await showToast({
@@ -130,9 +132,12 @@ export default function Command() {
         title: "Checking for updates...",
       });
 
-      const diffs = await fetchCommitCompareDiffs(cachedIndex.commitSha, latestSha);
+      const diffs = await fetchCommitCompareDiffs(
+        cachedIndex.commitSha,
+        latestSha,
+      );
       const docsDiffs = diffs.filter(
-        (d) => d.filename.startsWith("docs/") && d.filename.endsWith(".md")
+        (d) => d.filename.startsWith("docs/") && d.filename.endsWith(".md"),
       );
 
       if (docsDiffs.length === 0) {
@@ -157,10 +162,14 @@ export default function Command() {
       for (const diff of docsDiffs) {
         const filename = diff.filename.replace("docs/", "");
         const categoryPage = CATEGORY_PAGES.find((p) => p.path === filename);
-        const category = categoryPage ? categoryPage.category : filename.replace(".md", "");
+        const category = categoryPage
+          ? categoryPage.category
+          : filename.replace(".md", "");
 
         // Remove old items for this category
-        updatedItems = updatedItems.filter((item) => item.category !== category);
+        updatedItems = updatedItems.filter(
+          (item) => item.category !== category,
+        );
 
         if (diff.status !== "removed") {
           try {
@@ -204,7 +213,10 @@ export default function Command() {
       }
 
       // Add to head of array and filter duplicates
-      const newList = [item.id, ...list.filter((id) => id !== item.id)].slice(0, 10);
+      const newList = [item.id, ...list.filter((id) => id !== item.id)].slice(
+        0,
+        10,
+      );
       await LocalStorage.setItem(RECENT_OPENED_KEY, JSON.stringify(newList));
       setRecentlyOpenedIds(newList);
     } catch (e) {
@@ -217,7 +229,8 @@ export default function Command() {
     const initData = async () => {
       try {
         // Load favorites/recent
-        const storedRecent = await LocalStorage.getItem<string>(RECENT_OPENED_KEY);
+        const storedRecent =
+          await LocalStorage.getItem<string>(RECENT_OPENED_KEY);
         if (storedRecent) {
           setRecentlyOpenedIds(JSON.parse(storedRecent) as string[]);
         }
@@ -315,7 +328,7 @@ export default function Command() {
           item.category !== "nsfw" &&
           !item.subcategory.toLowerCase().includes("nsfw") &&
           !item.section.toLowerCase().includes("nsfw") &&
-          !item.title.toLowerCase().includes("nsfw")
+          !item.title.toLowerCase().includes("nsfw"),
       );
     }
 
@@ -362,7 +375,9 @@ export default function Command() {
       };
 
       // Check if there is any metadata matching the query
-      const hasMetadataMatch = result.some((item) => getMetadataMatchScore(item) >= 5);
+      const hasMetadataMatch = result.some(
+        (item) => getMetadataMatchScore(item) >= 5,
+      );
 
       if (hasMetadataMatch) {
         // Filter items that match in some way:
@@ -371,7 +386,7 @@ export default function Command() {
             getTitleMatchScore(item) > 0 ||
             getMetadataMatchScore(item) > 0 ||
             item.description.toLowerCase().includes(q) ||
-            item.url.toLowerCase().includes(q)
+            item.url.toLowerCase().includes(q),
         );
 
         // Find the single best title match
@@ -437,7 +452,7 @@ export default function Command() {
             item.description.toLowerCase().includes(q) ||
             item.section.toLowerCase().includes(q) ||
             item.subcategory.toLowerCase().includes(q) ||
-            item.url.toLowerCase().includes(q)
+            item.url.toLowerCase().includes(q),
         );
 
         // Sort: title exact -> title starts-with -> title contains -> starred -> rest
@@ -483,7 +498,9 @@ export default function Command() {
     if (searchText) return list.slice(0, 200);
 
     // If search is empty, filter out favorites from the main list
-    const filtered = list.filter((item) => !recentlyOpenedIds.includes(item.id));
+    const filtered = list.filter(
+      (item) => !recentlyOpenedIds.includes(item.id),
+    );
     return filtered.slice(0, 200);
   }, [filteredItems, recentlyOpenedIds, searchText]);
 
@@ -498,21 +515,31 @@ export default function Command() {
 
   // Generate Detail View Markdown Content
   const getDetailMarkdown = (item: FMItem) => {
-    const starredBadge = item.starred ? " ⭐ Community Pick" : "";
+    const starredBadge = item.starred ? " (Community Pick)" : "";
 
     let mirrorsSection = "";
     if (item.mirrors.length > 0) {
-      mirrorsSection = `\n### Mirrors\n` + item.mirrors.map((m, idx) => `* [Mirror ${idx + 2}](${m})`).join("\n");
+      mirrorsSection =
+        `\n### Mirrors\n` +
+        item.mirrors.map((m, idx) => `* [Mirror ${idx + 2}](${m})`).join("\n");
     }
 
     let alternativesSection = "";
     if (item.alternatives.length > 0) {
-      alternativesSection = `\n### Alternatives\n` + item.alternatives.map((alt) => `* [${alt.name}](${alt.url})`).join("\n");
+      alternativesSection =
+        `\n### Alternatives\n` +
+        item.alternatives
+          .map((alt) => `* [${alt.name}](${alt.url})`)
+          .join("\n");
     }
 
     let officialSection = "";
     if (item.officialLinks.length > 0) {
-      officialSection = `\n### Official Links\n` + item.officialLinks.map((off) => `* [${off.name}](${off.url})`).join("\n");
+      officialSection =
+        `\n### Official Links\n` +
+        item.officialLinks
+          .map((off) => `* [${off.name}](${off.url})`)
+          .join("\n");
     }
 
     return `
@@ -547,12 +574,17 @@ ${officialSection}
           onAction={async () => {
             await trackVisit(item);
             await Clipboard.copy(item.url);
-            await showToast({ style: Toast.Style.Success, title: "Copied link to clipboard" });
+            await showToast({
+              style: Toast.Style.Success,
+              title: "Copied link to clipboard",
+            });
           }}
         />
 
         {/* Sub-section for Mirrors & Alternatives */}
-        {(item.mirrors.length > 0 || item.alternatives.length > 0 || item.officialLinks.length > 0) && (
+        {(item.mirrors.length > 0 ||
+          item.alternatives.length > 0 ||
+          item.officialLinks.length > 0) && (
           <ActionPanel.Section title="Mirrors & Alternatives">
             {item.mirrors.map((mirrorUrl, idx) => (
               <Action
@@ -563,7 +595,10 @@ ${officialSection}
                   await trackVisit(item);
                   await open(mirrorUrl);
                 }}
-                shortcut={{ modifiers: ["cmd"], key: (idx + 2).toString() as any }}
+                shortcut={{
+                  modifiers: ["cmd"],
+                  key: (idx + 2).toString() as Keyboard.KeyEquivalent,
+                }}
               />
             ))}
             {item.alternatives.map((alt, idx) => (
@@ -615,7 +650,9 @@ ${officialSection}
   return (
     <List
       isLoading={isLoading}
-      searchBarPlaceholder={syncStatus || "Search FMHY (e.g. 'ai: generation' or 'movies')..."}
+      searchBarPlaceholder={
+        syncStatus || "Search FMHY (e.g. 'ai: generation' or 'movies')..."
+      }
       onSearchTextChange={setSearchText}
       throttle
       isShowingDetail={!isLoading && items.length > 0}
@@ -627,9 +664,16 @@ ${officialSection}
             onChange={(newValue) => setSelectedCategory(newValue)}
           >
             <List.Dropdown.Item title="All Categories" value="all" />
-            <List.Dropdown.Item title="⭐ Starred Picks Only" value="starred-picks" />
+            <List.Dropdown.Item
+              title="Starred Picks Only"
+              value="starred-picks"
+            />
             {categoriesList.map((cat) => (
-              <List.Dropdown.Item key={cat.id} title={cat.name} value={cat.id} />
+              <List.Dropdown.Item
+                key={cat.id}
+                title={cat.name}
+                value={cat.id}
+              />
             ))}
           </List.Dropdown>
         ) : undefined
@@ -649,11 +693,29 @@ ${officialSection}
                   markdown={getDetailMarkdown(item)}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="Title" text={item.title} />
-                      <List.Item.Detail.Metadata.Link title="Primary URL" text={item.url} target={item.url} />
-                      <List.Item.Detail.Metadata.Label title="Category" text={item.category} />
-                      <List.Item.Detail.Metadata.Label title="Subcategory" text={item.subcategory} />
-                      {item.section && <List.Item.Detail.Metadata.Label title="Section" text={item.section} />}
+                      <List.Item.Detail.Metadata.Label
+                        title="Title"
+                        text={item.title}
+                      />
+                      <List.Item.Detail.Metadata.Link
+                        title="Primary URL"
+                        text={item.url}
+                        target={item.url}
+                      />
+                      <List.Item.Detail.Metadata.Label
+                        title="Category"
+                        text={item.category}
+                      />
+                      <List.Item.Detail.Metadata.Label
+                        title="Subcategory"
+                        text={item.subcategory}
+                      />
+                      {item.section && (
+                        <List.Item.Detail.Metadata.Label
+                          title="Section"
+                          text={item.section}
+                        />
+                      )}
                     </List.Item.Detail.Metadata>
                   }
                 />
@@ -677,11 +739,29 @@ ${officialSection}
                 markdown={getDetailMarkdown(item)}
                 metadata={
                   <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label title="Title" text={item.title} />
-                    <List.Item.Detail.Metadata.Link title="Primary URL" text={item.url} target={item.url} />
-                    <List.Item.Detail.Metadata.Label title="Category" text={item.category} />
-                    <List.Item.Detail.Metadata.Label title="Subcategory" text={item.subcategory} />
-                    {item.section && <List.Item.Detail.Metadata.Label title="Section" text={item.section} />}
+                    <List.Item.Detail.Metadata.Label
+                      title="Title"
+                      text={item.title}
+                    />
+                    <List.Item.Detail.Metadata.Link
+                      title="Primary URL"
+                      text={item.url}
+                      target={item.url}
+                    />
+                    <List.Item.Detail.Metadata.Label
+                      title="Category"
+                      text={item.category}
+                    />
+                    <List.Item.Detail.Metadata.Label
+                      title="Subcategory"
+                      text={item.subcategory}
+                    />
+                    {item.section && (
+                      <List.Item.Detail.Metadata.Label
+                        title="Section"
+                        text={item.section}
+                      />
+                    )}
                   </List.Item.Detail.Metadata>
                 }
               />

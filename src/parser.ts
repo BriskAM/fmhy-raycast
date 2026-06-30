@@ -79,8 +79,8 @@ export function parseMarkdownFile(content: string, category: string): FMItem[] {
 
     // 5. Split line into links part and description part
     const splitIndex = findDescriptionSplit(line);
-    let linksPart = splitIndex !== -1 ? line.slice(0, splitIndex) : line;
-    let descPart = splitIndex !== -1 ? line.slice(splitIndex + 3) : "";
+    const linksPart = splitIndex !== -1 ? line.slice(0, splitIndex) : line;
+    const descPart = splitIndex !== -1 ? line.slice(splitIndex + 3) : "";
 
     // 6. Extract links from linksPart
     const mainLinks: { text: string; url: string }[] = [];
@@ -133,7 +133,11 @@ export function parseMarkdownFile(content: string, category: string): FMItem[] {
     // Clean up trailing slashes, commas, pipes
     description = description.replace(/^[\s,/|–—-]+|[\s,/|–—-]+$/g, "").trim();
 
-    const id = generateId(title, category, currentSection || currentSubcategory);
+    const id = generateId(
+      title,
+      category,
+      currentSection || currentSubcategory,
+    );
 
     items.push({
       id,

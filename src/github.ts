@@ -1,8 +1,13 @@
-import { CATEGORY_PAGES } from "./constants";
-
 export interface GitHubFileDiff {
   filename: string;
-  status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+  status:
+    | "added"
+    | "removed"
+    | "modified"
+    | "renamed"
+    | "copied"
+    | "changed"
+    | "unchanged";
 }
 
 // Fetch the latest commit SHA from the main branch of fmhy/edit
@@ -28,14 +33,19 @@ export async function fetchRawFileContent(path: string): Promise<string> {
   const res = await fetch(url);
 
   if (!res.ok) {
-    throw new Error(`Failed to fetch file content for docs/${path}: ${res.statusText}`);
+    throw new Error(
+      `Failed to fetch file content for docs/${path}: ${res.statusText}`,
+    );
   }
 
   return res.text();
 }
 
 // Compare two commits to get the list of changed files
-export async function fetchCommitCompareDiffs(localSha: string, latestSha: string): Promise<GitHubFileDiff[]> {
+export async function fetchCommitCompareDiffs(
+  localSha: string,
+  latestSha: string,
+): Promise<GitHubFileDiff[]> {
   const url = `https://api.github.com/repos/fmhy/edit/compare/${localSha}...${latestSha}`;
   const res = await fetch(url, {
     headers: {
