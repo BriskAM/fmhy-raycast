@@ -1,8 +1,13 @@
 import { FMItem, Link } from "./types";
 
-// Generates a simple hash for unique item IDs
-function generateId(title: string, category: string, section: string): string {
-  const str = `${category}-${section}-${title}`;
+// Generates a simple hash for unique item IDs, incorporating the URL to prevent collisions
+function generateId(
+  title: string,
+  category: string,
+  section: string,
+  url: string,
+): string {
+  const str = `${category}-${section}-${title}-${url}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
@@ -137,6 +142,7 @@ export function parseMarkdownFile(content: string, category: string): FMItem[] {
       title,
       category,
       currentSection || currentSubcategory,
+      url,
     );
 
     items.push({

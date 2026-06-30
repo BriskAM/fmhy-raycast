@@ -8,6 +8,7 @@ export interface GitHubFileDiff {
     | "copied"
     | "changed"
     | "unchanged";
+  previous_filename?: string;
 }
 
 // Fetch the latest commit SHA from the main branch of fmhy/edit
