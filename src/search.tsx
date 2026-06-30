@@ -643,7 +643,7 @@ ${officialSection}
               key={`recent-${item.id}`}
               title={item.title}
               subtitle={item.subcategory}
-              icon={item.starred ? { source: Icon.Star, tintColor: "#f5c518" } : Icon.Heart}
+              icon={item.starred ? Icon.Star : Icon.Clock}
               detail={
                 <List.Item.Detail
                   markdown={getDetailMarkdown(item)}
@@ -671,7 +671,7 @@ ${officialSection}
             key={item.id}
             title={item.title}
             subtitle={item.subcategory}
-            icon={item.starred ? { source: Icon.Star, tintColor: "#f5c518" } : undefined}
+            icon={item.starred ? Icon.Star : undefined}
             detail={
               <List.Item.Detail
                 markdown={getDetailMarkdown(item)}
