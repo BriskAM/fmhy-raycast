@@ -27,10 +27,6 @@ import { parseMarkdownFile } from "./parser";
 const INDEX_FILE = "fmhy-index.json";
 const RECENT_OPENED_KEY = "recently-opened-v1";
 
-interface Preferences {
-  showNsfw: boolean;
-}
-
 // Map short search prefixes to main category IDs
 const PREFIX_MAP: Record<string, string> = {
   ai: "ai",
@@ -294,14 +290,31 @@ export default function Command() {
   // Parse search prefix (e.g. "ai: image" or "/ai image")
   const parsedSearch = useMemo(() => {
     const trimmed = searchText.trim();
-    const prefixRegex = /^([a-zA-Z0-9-]+)[:/]\s*(.*)$/;
-    const match = trimmed.match(prefixRegex);
 
+    // Check for slash prefix: /ai generation
+    if (trimmed.startsWith("/")) {
+      const slashRegex = /^\/([a-zA-Z0-9-]+)(?:\s+(.*))?$/;
+      const match = trimmed.match(slashRegex);
+      if (match) {
+        const rawPrefix = match[1].toLowerCase();
+        const query = match[2] || "";
+        const categoryId = PREFIX_MAP[rawPrefix];
+        if (categoryId) {
+          return {
+            categoryOverride: categoryId,
+            query: query,
+          };
+        }
+      }
+    }
+
+    // Check for colon prefix: ai: generation
+    const colonRegex = /^([a-zA-Z0-9-]+):\s*(.*)$/;
+    const match = trimmed.match(colonRegex);
     if (match) {
       const rawPrefix = match[1].toLowerCase();
       const query = match[2];
       const categoryId = PREFIX_MAP[rawPrefix];
-
       if (categoryId) {
         return {
           categoryOverride: categoryId,
