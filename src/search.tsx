@@ -619,7 +619,7 @@ ${officialSection}
               const shortcut =
                 shortcutKey <= 9
                   ? {
-                      modifiers: ["cmd"] as const,
+                      modifiers: ["cmd"] as Keyboard.KeyModifier[],
                       key: shortcutKey.toString() as Keyboard.KeyEquivalent,
                     }
                   : undefined;
